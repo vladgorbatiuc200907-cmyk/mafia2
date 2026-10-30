@@ -1,0 +1,43 @@
+const fs=require('node:fs'),crypto=require('node:crypto'),assert=require('node:assert/strict');
+const source=fs.readFileSync(require('node:path').join(__dirname,'..','server.js'),'utf8');
+const body=source.slice(source.indexOf('const rooms = new Map();'),source.indexOf("io.on('connection'"));
+const timers=new Map();let counter=1;
+const setTimeoutFake=(fn,ms)=>{const id=counter++;timers.set(id,{fn,ms});return id;};
+const clearTimeoutFake=id=>timers.delete(id);
+const io={sockets:{sockets:new Map()}};
+const lib=new Function('io','crypto','setTimeout','clearTimeout',body+';return {roles,mafiaCount,presets,makePlayer,start,advance,enter,getDuration,largeRoom,publicChatAllowed,view,team};')(io,crypto,setTimeoutFake,clearTimeoutFake);
+function room(n){const people=Array.from({length:n},(_,i)=>lib.makePlayer({id:'s'+i},'Test'+i));return {code:'ABC123',host:people[0].id,players:people,phase:'lobby',messages:[],day:0,deadline:null,mafiaVotes:{},mediumPair:[],nominees:[],tally:{},botTimers:[],fast:false};}
+for(let n=5;n<=20;n++){
+  const r=room(n);lib.start(r);
+  assert.equal(r.players.length,n);
+  assert.equal(r.players.filter(x=>lib.team(x)==='Mafia').length,Math.round(n/3),n);
+  assert.equal(r.players.filter(x=>lib.team(x)==='Oraș').length,n-Math.round(n/3),n);
+  assert.equal(lib.largeRoom(r),n>8,n);
+  assert.equal(r.phase,'night0');
+  assert.equal(r.players.filter(x=>x.role==='boss').length,1);
+  const rp=r.players.find(p=>lib.team(p)==='Oraș');
+  const shown=lib.view(r,rp);
+  assert.equal(shown.players.filter(p=>p.role).length,0,'roluri secrete în lobby/noapte');
+  assert.equal(shown.mediumPair.length,0);
+  assert.equal(shown.mafiaVotes.bogus,undefined);
+  const mafia=r.players.find(p=>lib.team(p)==='Mafia');
+  const visible=lib.view(r,mafia).players.filter(p=>p.role);
+  assert.equal(visible.length,Math.round(n/3),'Mafia își vede echipa');
+}
+const r=room(9);lib.start(r);
+assert.equal(lib.getDuration(r,'day'),30);
+assert.equal(lib.getDuration(r,'dayVote'),20);
+assert.equal(lib.getDuration(r,'defend'),15);
+assert.equal(lib.getDuration(r,'finalVote'),10);
+assert.equal(lib.getDuration(r,'night'),45);
+lib.enter(r,'day');assert(lib.publicChatAllowed(r,r.players[0]));
+lib.enter(r,'dayVote');assert(lib.publicChatAllowed(r,r.players[0]));
+r.players[0].choice=r.players[1].id;r.players[2].choice=r.players[1].id;r.players[3].choice=r.players[4].id;
+lib.advance(r);assert.equal(r.phase,'defend');assert.equal(r.nominees.length,2);
+for(const p of r.players)assert.equal(lib.publicChatAllowed(r,p),r.nominees.includes(p.id),'numai cei doi acuzați au drept de a vorbi');
+lib.advance(r);assert.equal(r.phase,'finalVote');
+lib.advance(r);assert.equal(r.phase,'night');
+const med=room(5);lib.start(med);
+med.mediumPair=[med.players[0].id,med.players[1].id];
+assert.equal(lib.view(med,med.players[2]).mediumPair.length,0,'legătura Medium nu este publică');
+console.log('✓ 16 configurații de roluri, proporții, confidențialitate, timere și faze de vot testate.');
